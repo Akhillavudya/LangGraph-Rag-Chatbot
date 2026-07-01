@@ -1,0 +1,25 @@
+# Virtual environment
+myenv/
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables / secrets
+.env
+
+# Database (local persisted chat memory)
+*.db
+chatbot.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
