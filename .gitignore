@@ -14,6 +14,9 @@ __pycache__/
 
 # Database (local persisted chat memory)
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 chatbot.db
 
 # OS

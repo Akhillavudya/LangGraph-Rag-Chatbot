@@ -42,7 +42,7 @@ Copy `.env.example` to `.env` and fill in your own keys (HuggingFace token, Alph
 LangSmith keys if using tracing). Then run:
 
 ```bash
-streamlit run app_2.py
+streamlit run src/client/app.py
 ```
 
 ## Roadmap

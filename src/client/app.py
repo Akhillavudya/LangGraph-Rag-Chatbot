@@ -1,5 +1,7 @@
 import streamlit as st
-from Langraph_backend import chatbot ,retrieve_all_threads ,ingest_pdf,thread_document_metadata # the brain 
+from src.backend.graph import chatbot
+from src.backend.memory import retrieve_all_threads
+from src.backend.rag.ingest import ingest_pdf, thread_document_metadata
 from langchain_core.messages import HumanMessage,AIMessage,ToolMessage
 import uuid
 
