@@ -1,28 +1,17 @@
 import os
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import FAISS
 
-from src.backend.llm import embeddings
-
-## PDF retriever store (per thread)
-_THREAD_RETRIEVERS: Dict[str, Any] = {}  # stores the retriever object for each thread
-_THREAD_METADATA: Dict[str, dict] = {}  # stores info about the pdf
-
-
-def _get_retriever(thread_id: Optional[str]):
-    """Fetch the retriever for a thread if available."""
-    if thread_id and thread_id in _THREAD_RETRIEVERS:
-        return _THREAD_RETRIEVERS[thread_id]
-    return None
+from src.backend.rag.vectorstore import client, vector_store, COLLECTION_NAME, thread_filter
 
 
 def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None) -> dict:
     """
-    Build a FAISS retriever for the uploaded PDF and store it for the thread.
+    Chunk the uploaded PDF and write it into the shared Qdrant collection,
+    tagged with this chat thread's id so it can be retrieved later.
 
     Returns a summary dict that can be surfaced in the UI.
     """
@@ -42,25 +31,23 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
         )
         chunks = splitter.split_documents(docs)
 
-        vector_store = FAISS.from_documents(chunks, embeddings)
-        retriever = vector_store.as_retriever(
-            search_type="similarity", search_kwargs={"k": 4}
-        )
-
-        _THREAD_RETRIEVERS[str(thread_id)] = retriever
-        _THREAD_METADATA[str(thread_id)] = {
+        summary = {
             "filename": filename or os.path.basename(temp_path),
             "documents": len(docs),
             "chunks": len(chunks),
         }
 
-        return {
-            "filename": filename or os.path.basename(temp_path),
-            "documents": len(docs),
-            "chunks": len(chunks),
-        }
+        for chunk in chunks:
+            chunk.metadata["thread_id"] = str(thread_id)
+            chunk.metadata["filename"] = summary["filename"]
+            chunk.metadata["total_pages"] = summary["documents"]
+            chunk.metadata["total_chunks"] = summary["chunks"]
+
+        vector_store.add_documents(chunks)
+
+        return summary
     finally:
-        # The FAISS store keeps copies of the text, so the temp file is safe to remove.
+        # Qdrant keeps its own copy of the text, so the temp file is safe to remove.
         try:
             os.remove(temp_path)
         except OSError:
@@ -68,8 +55,26 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
 
 
 def thread_has_document(thread_id: str) -> bool:
-    return str(thread_id) in _THREAD_RETRIEVERS
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        scroll_filter=thread_filter(thread_id),
+        limit=1,
+    )
+    return len(points) > 0
 
 
 def thread_document_metadata(thread_id: str) -> dict:
-    return _THREAD_METADATA.get(str(thread_id), {})
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        scroll_filter=thread_filter(thread_id),
+        limit=1,
+    )
+    if not points:
+        return {}
+
+    payload = points[0].payload.get("metadata", {})
+    return {
+        "filename": payload.get("filename"),
+        "documents": payload.get("total_pages"),
+        "chunks": payload.get("total_chunks"),
+    }
