@@ -60,13 +60,13 @@ if not API_URL or not TOKEN:
 
 # Fetch every past thread_id from the backend for the sidebar list.
 def get_threads():
-    resp = requests.get(f"{API_URL}/threads", headers=AUTH, timeout=30)
+    resp = requests.get(f"{API_URL}/threads", headers=AUTH, timeout=90)
     resp.raise_for_status()
     return resp.json()["threads"]
 
 # Fetch one thread's chat history (already filtered to user/assistant text server-side).
 def get_history(thread_id):
-    resp = requests.get(f"{API_URL}/history", params={"thread_id": thread_id}, headers=AUTH, timeout=30)
+    resp = requests.get(f"{API_URL}/history", params={"thread_id": thread_id}, headers=AUTH, timeout=90)
     resp.raise_for_status()
     return resp.json()["messages"]
 
@@ -126,7 +126,7 @@ st.sidebar.divider()
 try:
     threads = get_threads()
 except Exception:
-    st.sidebar.error("Can't reach backend.")
+    st.sidebar.info("⏳ Waking up the backend… refresh in a moment.")
     threads = []
 
 if not threads:
