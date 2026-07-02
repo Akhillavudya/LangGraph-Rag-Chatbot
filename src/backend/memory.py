@@ -32,3 +32,8 @@ def retrieve_all_threads():
         all_threads.add(checkpoint.config['configurable']['thread_id'])
 
     return list(all_threads)
+
+
+def delete_thread(thread_id):
+    """Remove all checkpoints for a single thread_id from the checkpointer."""
+    checkpointer.delete_thread(str(thread_id))

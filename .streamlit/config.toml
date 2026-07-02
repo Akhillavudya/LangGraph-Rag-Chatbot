@@ -1,0 +1,8 @@
+# Streamlit theme — controls the app's colors & font (no Python involved)
+[theme]
+base = "dark"
+primaryColor = "#7C5CFC"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#1A1D29"
+textColor = "#E6E6E6"
+font = "sans serif"
