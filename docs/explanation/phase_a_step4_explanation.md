@@ -98,12 +98,12 @@ object you construct yourself).
 - The node still passes `config=config` to `llm_with_tools.invoke(...)` (that's for tracing/propagation);
   the actual `thread_id` injection into the tool happens inside `ToolNode` at tool-call time, not here.
 
-### `src/client/app.py` (cleanup — still pending)
-- **Not yet done as of this commit.** There is a **duplicate** `st.set_page_config(...)` call (line 7
-  *and* line 59) left over from before the Step 1 restructure. Streamlit requires `set_page_config` to
-  be called exactly once, as the very first Streamlit command, so the second copy is a latent crash.
-  The fix is to delete the line-59 copy and keep the one at line 7 — tracked as an outstanding cleanup
-  to fold into a later commit.
+### `src/client/app.py` (cleanup — done as a follow-up after Step 5)
+- Removed the **duplicate** `st.set_page_config(...)` call. The file had one at line 7 *and* a leftover
+  second copy at line 59 (carried over from before the Step 1 restructure). Streamlit requires
+  `set_page_config` to be called exactly once, as the very first Streamlit command, so the second copy
+  was a latent crash. Deleted the line-59 copy, kept the one at line 7. (This was flagged as pending in
+  this doc's first version; it was completed together with deleting the orphaned `chatbot.db`.)
 
 ---
 
@@ -128,8 +128,8 @@ by hoping the model behaves.
   correctly scoped to the right thread on **every** call, not just when the LLM copies the UUID right.
 - The LLM's tool-calling surface is smaller and simpler (`query` only), which also makes it a bit less
   likely to fumble the call at all.
-- Still outstanding: the duplicate `set_page_config` in `src/client/app.py` (line 59) — a small cleanup
-  to fold into a later commit.
+- The duplicate `set_page_config` in `src/client/app.py` was removed as a follow-up cleanup (see the
+  file-by-file note above), closing out the last leftover from the Step 1 restructure.
 
 Next: Phase A Step 5 — **LangSmith tracing**. The `.env` keys are already scaffolded
 (`LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`, `LANGCHAIN_PROJECT` in `.env.example`) and the UI's

@@ -56,7 +56,6 @@ threads = st.session_state["chat_threads"][::-1]
 selected_thread = None
 
 #******************************Sidebar UI *********************
-st.set_page_config(page_title="Multi-Use AI Assistant", layout="wide")
 st.sidebar.title('LangGraph PDF Chatbot')
 st.sidebar.markdown(f"**Thread ID:** `{thread_key}`")
 
