@@ -1,0 +1,235 @@
+"""Phase C evaluation harness.
+
+Measures two things against the fixed sample document (assets/sample.pdf):
+  1. Retrieval quality  — hit-rate@1 / hit-rate@4 / MRR: did semantic search surface the chunk
+     that actually contains the answer?
+  2. Latency            — end-to-end p50/p95 for time-to-first-token and total response time,
+     running real turns through the full agent (these also show up in LangSmith).
+
+Run from the project root:  `python -m eval.run_eval`
+  --no-latency   retrieval metrics only (no LLM calls)
+  --no-cleanup   leave the eval thread's data in Qdrant/Neon for inspection
+"""
+
+import argparse
+import statistics
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from langchain_core.messages import AIMessage, HumanMessage
+
+from src.backend import config  # noqa: F401  (imports load .env before anything reads keys)
+from src.backend.graph import chatbot
+from src.backend.memory import delete_thread
+from src.backend.rag.ingest import ingest_pdf
+from src.backend.rag.vectorstore import COLLECTION_NAME, client, thread_filter, vector_store
+from qdrant_client.http.models import FilterSelector
+
+from eval.dataset import DOC_QA, LATENCY_PROMPTS
+
+K = 4  # top-k the rag_tool actually uses, so we score retrieval at the same depth
+LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+SAMPLE_PDF = Path("assets/sample.pdf")
+RESULTS_MD = Path("eval/README.md")
+
+
+def percentile(values, pct):
+    """Return the pct-th percentile of a list using linear interpolation (no numpy needed)."""
+    if not values:
+        return float("nan")
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * pct / 100
+    low, high = int(rank), min(int(rank) + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (rank - low)
+
+
+def retrieval_eval(thread_id):
+    """Score each question by whether its known answer appears in the top-K retrieved chunks."""
+    rows = []
+    for item in DOC_QA:
+        docs = vector_store.similarity_search(item["query"], k=K, filter=thread_filter(thread_id))
+        needle = item["expect"].lower()
+        rank = next((i + 1 for i, d in enumerate(docs) if needle in d.page_content.lower()), None)
+        rows.append({
+            "query": item["query"],
+            "expect": item["expect"],
+            "rank": rank,
+            "hit_at_1": rank == 1,
+            "hit_at_k": rank is not None,
+            "rr": (1.0 / rank) if rank else 0.0,
+        })
+    n = len(rows)
+    summary = {
+        "n": n,
+        "hit_at_1": sum(r["hit_at_1"] for r in rows) / n,
+        "hit_at_k": sum(r["hit_at_k"] for r in rows) / n,
+        "mrr": sum(r["rr"] for r in rows) / n,
+    }
+    return rows, summary
+
+
+def _time_one_turn(prompt, thread_id, kind):
+    """Stream one full agent turn, returning (time-to-first-token, total-time) in seconds."""
+    run_config = {
+        "configurable": {"thread_id": thread_id},
+        "run_name": "eval_turn",
+        "metadata": {"eval": True, "kind": kind},
+    }
+    start = time.perf_counter()
+    first_token_at = None
+    for chunk, _meta in chatbot.stream(
+        {"messages": [HumanMessage(content=prompt)]},
+        config=run_config,
+        stream_mode="messages",
+    ):
+        if isinstance(chunk, AIMessage) and chunk.content and first_token_at is None:
+            first_token_at = time.perf_counter()
+    end = time.perf_counter()
+    ttft = (first_token_at - start) if first_token_at else None
+    return ttft, end - start
+
+
+def latency_eval(thread_id):
+    """Run the latency prompts through the agent and summarise TTFT/total as p50/p95."""
+    rows = []
+    for item in LATENCY_PROMPTS:
+        ttft, total = _time_one_turn(item["prompt"], thread_id, item["kind"])
+        rows.append({"prompt": item["prompt"], "kind": item["kind"], "ttft": ttft, "total": total})
+    ttfts = [r["ttft"] for r in rows if r["ttft"] is not None]
+    totals = [r["total"] for r in rows]
+    summary = {
+        "n": len(rows),
+        "ttft_p50": percentile(ttfts, 50), "ttft_p95": percentile(ttfts, 95),
+        "total_p50": percentile(totals, 50), "total_p95": percentile(totals, 95),
+    }
+    return rows, summary
+
+
+def cleanup(thread_id):
+    """Delete the eval thread's PDF chunks from Qdrant and its checkpoints from Neon."""
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=FilterSelector(filter=thread_filter(thread_id)),
+        wait=True,
+    )
+    try:
+        delete_thread(thread_id)
+    except Exception:
+        pass
+
+
+def render_markdown(retr_rows, retr_sum, lat_rows, lat_sum):
+    """Build the eval/README.md report (tables + how-to) from the collected metrics."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        "# Evaluation Results",
+        "",
+        f"_Generated by `python -m eval.run_eval` on {now}._",
+        "",
+        f"- **Document:** `assets/sample.pdf` (a fixed known handbook)",
+        f"- **Embeddings:** `{EMBED_MODEL}`  ·  **LLM:** `{LLM_MODEL}`",
+        f"- **Retrieval depth:** top-{K}",
+        "",
+        "## Retrieval quality",
+        "",
+        f"Over **{retr_sum['n']}** questions whose answers each live in one place in the document:",
+        "",
+        "| Metric | Score |",
+        "|---|---|",
+        f"| Hit-rate@1 | {retr_sum['hit_at_1']:.0%} |",
+        f"| Hit-rate@{K} | {retr_sum['hit_at_k']:.0%} |",
+        f"| MRR | {retr_sum['mrr']:.3f} |",
+        "",
+        "<details><summary>Per-question detail</summary>",
+        "",
+        "| Question | Expected | Found rank | Hit@%d |" % K,
+        "|---|---|---|---|",
+    ]
+    for r in retr_rows:
+        rank = r["rank"] if r["rank"] else "—"
+        hit = "✅" if r["hit_at_k"] else "❌"
+        lines.append(f"| {r['query']} | `{r['expect']}` | {rank} | {hit} |")
+    lines += ["", "</details>", ""]
+
+    if lat_sum is not None:
+        lines += [
+            "## Latency (end-to-end, through the full agent)",
+            "",
+            f"Over **{lat_sum['n']}** turns. TTFT = time to first answer token; Total = full response.",
+            "",
+            "| Metric | p50 | p95 |",
+            "|---|---|---|",
+            f"| Time-to-first-token (s) | {lat_sum['ttft_p50']:.2f} | {lat_sum['ttft_p95']:.2f} |",
+            f"| Total response (s) | {lat_sum['total_p50']:.2f} | {lat_sum['total_p95']:.2f} |",
+            "",
+            "<details><summary>Per-turn detail</summary>",
+            "",
+            "| Prompt | Kind | TTFT (s) | Total (s) |",
+            "|---|---|---|---|",
+        ]
+        for r in lat_rows:
+            ttft = f"{r['ttft']:.2f}" if r["ttft"] is not None else "—"
+            lines.append(f"| {r['prompt']} | {r['kind']} | {ttft} | {r['total']:.2f} |")
+        lines += ["", "</details>", ""]
+    else:
+        lines += ["## Latency", "", "_Skipped (`--no-latency`)._", ""]
+
+    lines += [
+        "## How to reproduce",
+        "",
+        "```bash",
+        "python -m eval.run_eval            # retrieval + latency",
+        "python -m eval.run_eval --no-latency   # retrieval only (no LLM calls)",
+        "```",
+        "",
+        "The harness ingests `assets/sample.pdf` into a throwaway thread, measures retrieval and "
+        "latency, writes this file, then deletes that thread's data from Qdrant and Neon. Latency "
+        "turns are traced in LangSmith with `metadata.eval = true`.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def main():
+    """Ingest the sample PDF, run both evals, print a summary, write the report, and clean up."""
+    parser = argparse.ArgumentParser(description="Run the RAG chatbot evaluation harness.")
+    parser.add_argument("--no-latency", action="store_true", help="skip the LLM latency turns")
+    parser.add_argument("--no-cleanup", action="store_true", help="keep eval data for inspection")
+    args = parser.parse_args()
+
+    if not SAMPLE_PDF.exists():
+        raise SystemExit(f"Missing {SAMPLE_PDF} — run `python assets/make_sample_pdf.py` first.")
+
+    thread_id = f"eval-{uuid.uuid4()}"
+    print(f"Ingesting {SAMPLE_PDF} into eval thread {thread_id} ...")
+    summary = ingest_pdf(SAMPLE_PDF.read_bytes(), thread_id=thread_id, filename="sample.pdf")
+    print(f"  {summary['chunks']} chunks from {summary['documents']} page(s).")
+
+    print("Scoring retrieval ...")
+    retr_rows, retr_sum = retrieval_eval(thread_id)
+    print(f"  hit@1={retr_sum['hit_at_1']:.0%}  hit@{K}={retr_sum['hit_at_k']:.0%}  MRR={retr_sum['mrr']:.3f}")
+
+    lat_rows, lat_sum = (None, None)
+    if not args.no_latency:
+        print(f"Timing {len(LATENCY_PROMPTS)} agent turns (this calls the LLM) ...")
+        lat_rows, lat_sum = latency_eval(thread_id)
+        print(f"  TTFT p50={lat_sum['ttft_p50']:.2f}s p95={lat_sum['ttft_p95']:.2f}s  "
+              f"Total p50={lat_sum['total_p50']:.2f}s p95={lat_sum['total_p95']:.2f}s")
+
+    RESULTS_MD.write_text(render_markdown(retr_rows, retr_sum, lat_rows, lat_sum), encoding="utf-8")
+    print(f"Wrote {RESULTS_MD}")
+
+    if not args.no_cleanup:
+        print("Cleaning up eval thread ...")
+        cleanup(thread_id)
+    else:
+        print(f"Left eval data in place (thread {thread_id}).")
+
+
+if __name__ == "__main__":
+    main()
