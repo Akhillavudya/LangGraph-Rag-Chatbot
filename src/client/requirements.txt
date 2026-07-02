@@ -1,0 +1,5 @@
+# Thin Streamlit client deps — Streamlit Cloud picks this up because it sits
+# next to the entrypoint (src/client/app.py), which is searched before repo root.
+# No langchain/qdrant/torch here: the client only talks to the Modal backend over HTTP.
+streamlit==1.56.0
+requests==2.33.1

@@ -86,9 +86,14 @@ For a live "typing" feel, we don't wait for the whole answer:
 - **CSS note:** on the narrow `centered` layout Streamlit kept collapsing the sidebar off-screen, so the
   CSS block force-pins it open (`transform: none; margin-left: 0; fixed width`) — see the "Issues" section.
 
-### `requirements-client.txt` — new
+### `src/client/requirements.txt` — new
 Only `streamlit` + `requests`. This is what the UI host installs — no torch, no langchain, no qdrant.
-Proof that the client is truly thin. (The backend still uses the full `requirements.txt`.)
+Proof that the client is truly thin. (The backend still uses the full root `requirements.txt`.)
+It lives **next to `app.py`** on purpose: Streamlit Community Cloud searches the entrypoint file's
+directory *before* the repo root and only recognizes the exact name `requirements.txt`, so placing it
+here makes the thin file win and the heavy root one get ignored. (An earlier attempt named it
+`requirements-client.txt` at the root — Streamlit Cloud would have skipped it and installed the heavy
+backend deps instead.)
 
 ### `.streamlit/secrets.toml.example` — new (committed)
 Placeholder names for `MODAL_ENDPOINT_URL` and `CHATBOT_API_TOKEN`, so anyone cloning the repo knows
