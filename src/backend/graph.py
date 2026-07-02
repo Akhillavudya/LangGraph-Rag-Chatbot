@@ -11,18 +11,14 @@ llm_with_tools = llm.bind_tools(tools)
 
 
 def chat_node(state: ChatState, config=None):
-    """LLM node that may answer or request a tool call."""
-    thread_id = None
-    if config and isinstance(config, dict):
-        thread_id = config.get("configurable", {}).get("thread_id")
-
+    """LLM node that either answers directly or requests a tool call."""
+    # System prompt no longer mentions thread_id — rag_tool now injects it from config itself.
     system_message = SystemMessage(
         content=(
-            "You are a helpful assistant. For questions about the uploaded PDF, call "
-            "the `rag_tool` and include the thread_id "
-            f"`{thread_id}`. You can also use the web search, stock price, and "
-            "calculator tools when helpful. If no document is available, ask the user "
-            "to upload a PDF."
+            "You are a helpful assistant. For questions about the uploaded PDF, call the "
+            "`rag_tool` with the user's question. You can also use the web search, stock price, "
+            "and calculator tools when helpful. If no document is available, ask the user to "
+            "upload a PDF."
         )
     )
 

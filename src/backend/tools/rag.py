@@ -1,21 +1,25 @@
 
-from typing import Optional
-
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from src.backend.rag.vectorstore import vector_store, thread_filter
 from src.backend.rag.ingest import thread_document_metadata
 
 
 @tool
-def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
-    """
-    Retrieve relevant information from the uploaded PDF for this chat thread.
-    Always include the thread_id when calling this tool.
-    """
-    if not thread_id:
-        return {"error": "No thread_id provided.", "query": query}
+def rag_tool(query: str, config: RunnableConfig) -> dict:
+    """Retrieve relevant information from the uploaded PDF for this chat thread.
 
+    Call this for any question about the uploaded document. Pass only the user's
+    question as `query`; the thread is resolved automatically.
+    """
+    # thread_id comes from the graph's run config (set by the UI), never from the LLM — always correct.
+    thread_id = config.get("configurable", {}).get("thread_id")
+
+    if not thread_id:
+        return {"error": "No thread_id available in config.", "query": query}
+
+    # Semantic search over Qdrant, restricted to just this thread's PDF chunks.
     results = vector_store.similarity_search(query, k=4, filter=thread_filter(thread_id))
 
     if not results:
