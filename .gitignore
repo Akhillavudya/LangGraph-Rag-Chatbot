@@ -11,6 +11,7 @@ __pycache__/
 
 # Environment variables / secrets
 .env
+.streamlit/secrets.toml
 
 # Database (local persisted chat memory)
 *.db

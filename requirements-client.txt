@@ -1,0 +1,4 @@
+# Thin Streamlit client — talks to the Modal backend over HTTP only.
+# No langchain/qdrant/torch here: the client never imports the data layer.
+streamlit==1.56.0
+requests==2.33.1
