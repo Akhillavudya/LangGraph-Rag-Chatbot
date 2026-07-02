@@ -4,7 +4,7 @@ from src.backend.memory import retrieve_all_threads
 from src.backend.rag.ingest import ingest_pdf, thread_document_metadata
 from langchain_core.messages import HumanMessage,AIMessage,ToolMessage
 import uuid
-
+st.set_page_config(page_title="Multi Utility Chatbot", layout="wide")
 #*******************************utility functions ***********************
 
 #generating new thread_id while click of new chat button
@@ -96,7 +96,7 @@ else:
         if st.sidebar.button(str(thread_id), key=f"side-thread-{thread_id}"):
             selected_thread = thread_id
 #*********************** Main UI ************************
-st.set_page_config(page_title="Multi Utility Chatbot", layout="wide")
+
 st.title("Multi Utility Chatbot")
 # loading the conversation history
 for message in st.session_state['message_history']:

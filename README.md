@@ -42,8 +42,12 @@ Copy `.env.example` to `.env` and fill in your own keys (HuggingFace token, Alph
 LangSmith keys if using tracing). Then run:
 
 ```bash
-streamlit run src/client/app.py
+python -m streamlit run src/client/app.py
 ```
+
+Run it with `python -m streamlit`, not the bare `streamlit` command, and from the project root
+(`ChatBot/`) — the `-m` flag adds the project root to Python's import path, which is what lets the
+`from src.backend...` imports in `app.py` resolve.
 
 ## Roadmap
 
