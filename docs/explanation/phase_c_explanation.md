@@ -143,6 +143,45 @@ extracted PDF text, a cold-start inflating p95, or Qdrant cleanup needing `Filte
     like Groq, or paid HF credits), parked for a later session. (3) A transient `httpx.ReadTimeout` from
     Qdrant on one run was just network flakiness — a plain re-run succeeded; not every failure is a bug.
 
+- **Swapping the LLM to Groq — and a `tool_use_failed` bug that picked the model for us.**
+  - *What we changed & why:* replaced HuggingFace's paid router with **Groq's free API** — one file,
+    `src/backend/llm.py`: `ChatGroq(model=...)` instead of `HuggingFaceEndpoint`/`ChatHuggingFace`. Only
+    the **chat LLM** changed; `embeddings` stayed on the local MiniLM (it never hit the paid API, which is
+    why retrieval always worked). `bind_tools` and streaming work the same, so `graph.py` was untouched.
+  - *Install gotcha:* `pip install langchain-groq` silently **upgraded a pinned dep**, `langchain-core`
+    `1.2.30 → 1.4.8`. We caught it, ran `pip check` (no conflicts) and the eval (still passes), then
+    updated the pin to match reality. **Lesson:** adding one package can move your pins — re-check and
+    re-pin what actually got installed, don't assume the lockfile is still true.
+  - *What broke:* the first full run with `llama-3.3-70b-versatile` crashed on one turn with
+    `groq.APIError: 400 tool_use_failed ... Failed to call a function`. The `failed_generation` field
+    showed the cause: the model emitted a tool call as **literal text** —
+    `<function=duckduckgo_search {"query": "..."}</function>` — instead of a structured `tool_calls`
+    object, so Groq's parser rejected it. It was **intermittent** (2 of 3 RAG turns were fine).
+  - *How we diagnosed it:* read `failed_generation` (it names the exact malformed output), then ran a
+    tiny **bake-off** — bound the real tools to five Groq models and invoked the breaking prompt 4×
+    each, counting failures. `llama-3.3-70b` failed 2/8; `llama-3.1-8b-instant`, `openai/gpt-oss-20b`,
+    and `qwen/qwen3-32b` were 0/8; `kimi-k2` 404'd (not on our tier). We chose **`llama-3.1-8b-instant`**
+    (0 failures, plain instruct model = no reasoning-token noise, closest in size to the old 7B, best
+    latency).
+  - *Lesson:* function-calling reliability is **model-specific, not just provider-specific** — a bigger
+    model isn't automatically better at emitting valid tool JSON. When a model misbehaves, the error body
+    usually contains the raw generation; read it, then measure candidates instead of guessing.
+
+- **Groq free-tier token-per-minute (TPM) cap → latency numbers left as "Skipped".**
+  - *What happened:* with tool-calling fixed, the full run then hit `groq.APIStatusError: 413 ... tokens
+    per minute (TPM): Limit 6000, Requested 6918`. The latency loop runs all 6 prompts in one shared
+    thread, so the checkpointer accumulates history and a later RAG turn (4 PDF chunks × several turns)
+    ballooned a single request past the 6000-token/min free limit.
+  - *Why it doesn't matter for the app:* a real user sends one message at a time — they never burst 6
+    turns through in seconds, so they never hit the TPM cap. This is purely a *benchmark* artifact.
+  - *Decision:* latency is a **nice-to-have** stat, not core to the project, so we ship with retrieval
+    metrics (the substantive result) and mark latency "Skipped" via `--no-latency`, rather than sink more
+    time into rate-limit plumbing. The clean fix, if ever wanted: give each latency prompt its own thread
+    (no history pile-up) and retry turns on `429/413` with backoff so the run self-paces under the TPM.
+  - *Lesson:* know the difference between a limit that hurts **users** and one that only hurts a
+    **stress test** — and don't over-engineer the second. Also: managed free tiers cap *rate* (TPM/RPM),
+    not just total usage; batch/burst workloads feel this long before interactive ones do.
+
 ---
 
 ## 5. Where things stand + what's next

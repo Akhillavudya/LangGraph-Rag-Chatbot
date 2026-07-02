@@ -30,7 +30,7 @@ from qdrant_client.http.models import FilterSelector
 from eval.dataset import DOC_QA, LATENCY_PROMPTS
 
 K = 4  # top-k the rag_tool actually uses, so we score retrieval at the same depth
-LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+LLM_MODEL = "llama-3.1-8b-instant (Groq)"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 SAMPLE_PDF = Path("assets/sample.pdf")
 RESULTS_MD = Path("eval/README.md")

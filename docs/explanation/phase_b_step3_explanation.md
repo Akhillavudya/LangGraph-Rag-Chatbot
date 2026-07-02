@@ -146,6 +146,18 @@ Added `.streamlit/secrets.toml` so the real token can never be committed by acci
 
 ---
 
+### 4.6 "Can't reach backend" on the first cloud load
+- **What happened:** right after deploy, the sidebar showed a red "Can't reach backend," but a refresh
+  fixed it and chat worked.
+- **Why:** Modal **scales to zero** when idle. The first request has to boot a container, connect to
+  Neon/Qdrant, *and* load the embedding model — a **cold start** that can exceed the sidebar call's 30s
+  timeout, so `/threads` timed out even though the backend was healthy.
+- **Fix:** raise the `/threads` and `/history` timeouts to 90s (comfortably covering a cold start) and
+  soften the message to a friendly "⏳ Waking up… refresh in a moment." The heavy `/chat` and `/ingest`
+  calls were already at 300s. **Lesson:** serverless backends trade always-on latency for cost — clients
+  must tolerate the first-request cold start with generous timeouts and calm messaging, not treat it as
+  an outage.
+
 ## 5. Where things stand + what's next
 
 The backend is deployed to a permanent Modal URL, and the client is a genuinely thin Streamlit app that
